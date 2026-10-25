@@ -1,0 +1,12 @@
+{
+  "name": "ludus-lunae-channel",
+  "private": true,
+  "version": "0.1.0",
+  "license": "PolyForm-Noncommercial-1.0.0",
+  "description": "Ludus Lunae 的 Claude Code channel：把游戏聊天面板和游戏事件推进终端里的 Claude Code 会话",
+  "type": "module",
+  "main": "ludus-channel.mjs",
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "1.32.1"
+  }
+}

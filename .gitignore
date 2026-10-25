@@ -1,0 +1,16 @@
+# 依赖
+node_modules/
+# 运行时的数据：聊天记录、玩家文件夹、截图、token、日志
+chat-service/data/
+mcp-hub/data/
+mcp-hub/cache/
+# 编译出来的东西
+*.dll
+*.exe
+*.pdb
+plugin/BuildInfo.g.cs
+plugin-text-only/plugin/BuildInfo.g.cs
+plugin/build.local.bat
+plugin-text-only/plugin/build.local.bat
+__pycache__/
+*.pyc

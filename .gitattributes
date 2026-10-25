@@ -1,0 +1,3 @@
+* text=auto
+# cmd 在 LF 换行的 .bat 里跳标签（call :label、goto）会出错
+*.bat text eol=crlf

@@ -1,0 +1,16 @@
+{
+  "name": "ludus-hub",
+  "private": true,
+  "version": "0.1.0",
+  "license": "PolyForm-Noncommercial-1.0.0",
+  "description": "Ludus hub：把游戏的工具包成一个 MCP 服务（Streamable HTTP），谁连上来都能和 user 一起玩",
+  "type": "module",
+  "main": "hub.mjs",
+  "scripts": {
+    "start": "node hub.mjs",
+    "test": "node test/selftest.mjs"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "1.32.1"
+  }
+}

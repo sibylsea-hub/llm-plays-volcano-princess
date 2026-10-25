@@ -1,0 +1,628 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Ludus Lunae</title>
+<style>
+  :root {
+    --bg: #15171d;
+    --panel: #1d2029;
+    --line: #2c303b;
+    --text: #e8e6e1;
+    --muted: #9a9ca5;
+    --me: #3b4a6b;
+    --them: #2a2f3a;
+    --accent: #e6c27a;
+    --ok: #7fc8a0;
+    --bad: #e08a8a;
+    --radius: 12px;
+    font-family: "Microsoft YaHei UI", "Microsoft YaHei", "PingFang SC", "Noto Sans CJK SC", system-ui, sans-serif;
+    font-size: 15px;
+    color-scheme: dark;
+  }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; margin: 0; }
+  body { background: var(--bg); color: var(--text); display: flex; flex-direction: column; font-family: inherit; }
+  header, #log, form { position: relative; z-index: 1; }
+
+  header {
+    display: flex; align-items: center; gap: 8px;
+    padding: 8px 14px; border-bottom: 1px solid var(--line); background: var(--panel);
+  }
+  /* 标题两行：上面是名字，下面是现在谁挂着（窄面板里按钮多，横着放不下） */
+  #title { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 1px; }
+  header h1 { margin: 0; font-size: 15px; font-weight: 600; color: var(--accent); letter-spacing: .02em; line-height: 1.25; }
+  #status { font-size: 11px; color: var(--muted); font-variant-numeric: tabular-nums; min-width: 0;
+            white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  #status .dot { color: var(--bad); }
+  #status .playing { color: var(--accent); font-weight: 700; }  /* 现在在玩的那一个 */
+  #status.live .dot { color: var(--ok); }
+  header button {
+    background: none; border: 1px solid var(--line); color: var(--muted); border-radius: 8px;
+    padding: 3px 9px; font: inherit; font-size: 12px; cursor: pointer; flex: none;
+  }
+  header button:hover { color: var(--text); }
+
+  #log { flex: 1; overflow-y: auto; margin: 0; padding: 14px; list-style: none; display: flex; flex-direction: column; gap: 10px; }
+  #empty { color: var(--muted); font-size: 13px; text-align: center; margin: auto; max-width: 26em; line-height: 1.7; }
+  .msg { max-width: 82%; display: flex; flex-direction: column; gap: 3px; }
+  .msg .meta { font-size: 11px; color: var(--muted); }
+  .msg .text { padding: 8px 12px; border-radius: var(--radius); line-height: 1.6; white-space: pre-wrap; overflow-wrap: anywhere; }
+  .msg.me { align-self: flex-end; align-items: flex-end; }
+  .msg.me .text { background: var(--me); border-bottom-right-radius: 4px; }
+  .msg.them { align-self: flex-start; }
+  .msg.them .text { background: var(--them); border-bottom-left-radius: 4px; }
+  .msg.err .text { background: none; border: 1px dashed var(--bad); color: var(--bad); font-size: 13px; }
+
+  form { display: flex; gap: 8px; padding: 10px 14px 12px; border-top: 1px solid var(--line); background: var(--panel); }
+  textarea {
+    flex: 1; resize: none; min-height: 40px; max-height: 120px;
+    background: var(--bg); color: var(--text); border: 1px solid var(--line); border-radius: 10px;
+    padding: 9px 11px; font: inherit; line-height: 1.5; outline: none;
+  }
+  textarea:focus { border-color: var(--accent); }
+  form button {
+    background: var(--accent); color: #1a1a1a; border: none; border-radius: 10px;
+    padding: 0 16px; font: inherit; font-weight: 600; cursor: pointer;
+  }
+  form button:disabled { opacity: .5; cursor: default; }
+
+  /* 面板模式（Electron 置顶窗口里）：标题栏可以拖动窗口，气泡更宽 */
+  body.panel header { -webkit-app-region: drag; user-select: none; }
+  body.panel header button, body.panel #diag, body.panel #look { -webkit-app-region: no-drag; }
+  body.panel .msg { max-width: 92%; }
+
+  #diag, #look {
+    display: none; position: absolute; top: 44px; right: 10px; z-index: 2; width: min(420px, calc(100% - 20px));
+    background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius);
+    padding: 10px 12px; font-size: 12px; color: var(--muted); box-shadow: 0 8px 24px rgba(0,0,0,.4);
+  }
+  #diag.open { display: block; }
+  #look.open { display: grid; grid-template-columns: auto 1fr 3em; align-items: center; gap: 6px 10px; }
+  #look input { width: 100%; margin: 0; accent-color: var(--accent); }
+  #look output { color: var(--text); text-align: right; font-variant-numeric: tabular-nums; }
+  #look p { grid-column: 1 / -1; margin: 0; line-height: 1.6; }
+
+  /* 收起：整个窗口折成一个小按钮，点一下展开，按住可以拖（只在面板里有） */
+  #mini { display: none; }
+  body.mini > :not(#mini) { display: none !important; }
+  body.mini { background: var(--panel); }
+  body.mini #mini {
+    display: flex; align-items: center; justify-content: center; position: fixed; inset: 0;
+    margin: 0; padding: 0; border: 0; background: var(--panel); color: var(--accent); cursor: pointer;
+  }
+  #mini svg { width: 30px; height: 30px; }
+  #mini .dot {
+    display: none; position: absolute; top: 8px; right: 8px; width: 10px; height: 10px; border-radius: 50%;
+    background: var(--bad); box-shadow: 0 0 0 2px var(--panel);
+  }
+  #mini.unread .dot { display: block; }
+  #diag dl { display: grid; grid-template-columns: auto 1fr; gap: 4px 10px; margin: 0 0 8px; }
+  #diag dt { color: var(--muted); }
+  #diag dd { margin: 0; color: var(--text); overflow-wrap: anywhere; font-variant-numeric: tabular-nums; }
+
+  /* 模式开关：一排小按钮，开着的高亮 */
+  #modes { position: relative; z-index: 1; display: flex; gap: 6px; padding: 6px 14px; border-bottom: 1px solid var(--line); background: var(--panel); }
+  #modes button {
+    font: inherit; font-size: 12px; padding: 2px 10px; border-radius: 999px; cursor: pointer;
+    border: 1px solid var(--line); background: none; color: var(--muted);
+  }
+  #modes button.on { color: var(--bg); background: var(--accent); border-color: var(--accent); }
+  body.panel #modes { -webkit-app-region: no-drag; }
+  .theme-volcano #modes { background: #28120a; border-bottom: 1px solid var(--wood); }
+  .theme-volcano #modes button { border-color: var(--wood); }
+  .theme-volcano #modes button.on { color: var(--ink); background: linear-gradient(#efb06a, #d4803f); border-color: #3a1a08; font-weight: 700; }
+
+  #fx { display: none; }
+
+  /* ---------- 皮肤：火山的女儿 ----------
+     颜色取自游戏标题画面：深酒红棕底、橙褐按钮配深棕描边、焦橙红标题、雕花木框、羊皮纸画布。 */
+  body.theme-volcano {
+    --bg: #1d0b07;
+    --panel: #2c140c;
+    --line: #6a3c12;
+    --text: #f1e2c6;
+    --muted: #c29a6c;
+    --accent: #e8b860;
+    --ok: #e8b860;
+    --bad: #e2785a;
+    --wood: #6a3c12;
+    --wood-hi: #a3692b;
+    --ink: #2a1406;
+    font-family: "Noto Serif SC", "Source Han Serif SC", "SimSun", serif;
+    background:
+      radial-gradient(ellipse at 50% -10%, rgba(232, 140, 60, .14), transparent 60%),
+      repeating-linear-gradient(135deg, rgba(255, 220, 180, .018) 0 2px, transparent 2px 7px),
+      linear-gradient(#2a120c, #1c0a06);
+  }
+  .theme-volcano header {
+    background: linear-gradient(#3b1c10, #28120a);
+    border-bottom: 2px solid var(--wood);
+    box-shadow: inset 0 -1px 0 rgba(163, 105, 43, .45), 0 3px 8px rgba(0, 0, 0, .45);
+  }
+  .theme-volcano header h1 {
+    font-weight: 900; font-size: 17px; color: #d4521f; letter-spacing: .06em;
+    text-shadow: 0 1px 0 #120503, 1px 0 0 #120503, -1px 0 0 #120503, 0 -1px 0 #120503;
+  }
+  .theme-volcano header button {
+    color: var(--ink); font-weight: 700; border: 1.5px solid #3a1a08; border-radius: 9px;
+    background: linear-gradient(#efb06a, #d4803f);
+    box-shadow: inset 0 1px 0 #f9d39a;
+  }
+  .theme-volcano header button:hover { color: #000; filter: brightness(1.07); }
+
+  .theme-volcano .msg .meta { color: var(--muted); letter-spacing: .03em; }
+  .theme-volcano .msg.them .text {
+    background: linear-gradient(#f4e4c4, #e5cda1);
+    color: #3b1d0c;
+    border: 2px solid var(--wood);
+    box-shadow: inset 0 0 0 1px rgba(255, 247, 224, .8), 0 2px 5px rgba(0, 0, 0, .4);
+  }
+  .theme-volcano .msg.me .text {
+    background: linear-gradient(#eda862, #d4803f);
+    color: var(--ink);
+    border: 2px solid #3a1a08;
+    box-shadow: inset 0 1px 0 #f9d39a, 0 2px 5px rgba(0, 0, 0, .4);
+    font-weight: 600;
+  }
+  .theme-volcano .msg.err .text { background: none; color: var(--bad); border-color: var(--bad); box-shadow: none; }
+
+  .theme-volcano form {
+    background: linear-gradient(#28120a, #3b1c10);
+    border-top: 2px solid var(--wood);
+    box-shadow: inset 0 1px 0 rgba(163, 105, 43, .45);
+  }
+  .theme-volcano textarea {
+    background: #170805; border: 1.5px solid var(--wood); border-radius: 10px;
+    box-shadow: inset 0 2px 4px rgba(0, 0, 0, .5);
+  }
+  .theme-volcano textarea::placeholder { color: #8a6a4a; }
+  .theme-volcano textarea:focus { border-color: var(--accent); box-shadow: inset 0 2px 4px rgba(0, 0, 0, .5), 0 0 0 2px rgba(232, 184, 96, .18); }
+  .theme-volcano form button {
+    color: var(--ink); font-weight: 900; letter-spacing: .1em; padding: 0 18px;
+    border: 2px solid #3a1a08; border-radius: 12px;
+    background: linear-gradient(#f2b672, #d4803f 70%, #c56f30);
+    box-shadow: inset 0 1px 0 #fbdcab, 0 0 0 1px rgba(232, 184, 96, .35), 0 2px 5px rgba(0, 0, 0, .45);
+  }
+  .theme-volcano form button:hover:not(:disabled) { filter: brightness(1.06); }
+
+  .theme-volcano #diag, .theme-volcano #look { background: var(--panel); border: 2px solid var(--wood); }
+  .theme-volcano.mini #mini {
+    background: linear-gradient(#3b1c10, #28120a); color: #e8b860;
+    box-shadow: inset 0 0 0 2px var(--wood), inset 0 0 0 3px rgba(163, 105, 43, .45);
+  }
+  .theme-volcano #mini .dot { background: #e2785a; box-shadow: 0 0 0 2px #2c140c; }
+  .theme-volcano ::-webkit-scrollbar { width: 8px; }
+  .theme-volcano ::-webkit-scrollbar-thumb { background: var(--wood); border-radius: 4px; border: 1px solid #3a1a08; }
+  .theme-volcano ::-webkit-scrollbar-track { background: transparent; }
+
+  /* 飘落的花瓣和闪烁的金星，跟游戏标题画面一样；放在消息后面，不挡字 */
+  .theme-volcano #fx { display: block; position: fixed; inset: 0; z-index: 0; pointer-events: none; overflow: hidden; }
+  #fx .petal {
+    position: absolute; top: -20px; width: 9px; height: 6px; border-radius: 60% 40% 60% 40%;
+    background: #c9483a; opacity: .75; animation: fall linear infinite;
+  }
+  #fx .petal:nth-child(even) { background: #e6a0a0; width: 7px; height: 5px; }
+  #fx .spark {
+    position: absolute; color: #e8b860; font-size: 12px; opacity: 0;
+    text-shadow: 0 0 6px rgba(232, 184, 96, .8); animation: twinkle ease-in-out infinite;
+  }
+  @keyframes fall {
+    0%   { transform: translate(0, 0) rotate(0deg); }
+    100% { transform: translate(-60px, calc(100vh + 40px)) rotate(540deg); }
+  }
+  @keyframes twinkle {
+    0%, 100% { opacity: 0; transform: scale(.6); }
+    50%      { opacity: .9; transform: scale(1); }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    #fx .petal, #fx .spark { animation: none; display: none; }
+  }
+</style>
+</head>
+<body>
+<div id="fx" aria-hidden="true">
+  <i class="petal" style="left:12%; animation-duration:17s; animation-delay:-3s"></i>
+  <i class="petal" style="left:34%; animation-duration:22s; animation-delay:-11s"></i>
+  <i class="petal" style="left:58%; animation-duration:19s; animation-delay:-6s"></i>
+  <i class="petal" style="left:81%; animation-duration:25s; animation-delay:-15s"></i>
+  <i class="petal" style="left:96%; animation-duration:21s; animation-delay:-1s"></i>
+  <i class="petal" style="left:47%; animation-duration:28s; animation-delay:-20s"></i>
+  <span class="spark" style="left:18%; top:22%; animation-duration:4.5s">✦</span>
+  <span class="spark" style="left:76%; top:41%; animation-duration:6s; animation-delay:-2s">✦</span>
+  <span class="spark" style="left:30%; top:68%; animation-duration:5.2s; animation-delay:-3.5s">✦</span>
+  <span class="spark" style="left:88%; top:84%; animation-duration:7s; animation-delay:-1s">✦</span>
+</div>
+
+<header>
+  <div id="title">
+    <h1>Ludus Lunae</h1>
+    <div id="status"><span class="dot">●</span> 连接中…</div>
+  </div>
+  <button type="button" id="theme-toggle">皮肤</button>
+  <button type="button" id="look-toggle" title="调整个面板的透明度" hidden>透明</button>
+  <button type="button" id="diag-toggle">诊断</button>
+  <button type="button" id="minimize" title="收成小按钮（Ctrl+Alt+` 收起、展开）" hidden>–</button>
+  <button type="button" id="close-panel" title="关掉面板，屏幕上什么都不留（点托盘的月牙、按 Alt+` 或 Ctrl+Alt+` 再打开）" hidden>×</button>
+</header>
+
+<!-- 带 data-tpl / data-tpl-title / data-tpl-placeholder 的字里，{user}、{agent} 换成聊天服务给的名字（applyNames） -->
+<div id="modes">
+  <button type="button" data-mode="selfplay" data-tpl="{agent} 自己玩" data-tpl-title="开：{agent} 自己玩（插件翻对话、停在要做决定的地方，{agent} 用 vp_player.py 操作）。关：你玩，每到月底把这个月的台词和状态发给 {agent}"></button>
+  <button type="button" data-mode="packByScene" data-tpl-title="你玩的时候（{agent} 自己玩关着）：开着就是边玩边聊，离开一个地方、或者一段长剧情播完，{agent} 就看得到刚才发生的事；关着就月底一起看">边玩边聊</button>
+  <button type="button" data-mode="skipGames" title="跳过小游戏（骰子、赛马、舞会、演戏、鸟节画画和算术、钓鱼），直接给最好的结果。谁玩都能开；跳过时得到的成就不点亮">跳过小游戏</button>
+</div>
+
+<div id="diag" aria-live="polite">
+  <dl id="diag-list"></dl>
+  <button type="button" id="diag-send">上报诊断</button>
+</div>
+
+<div id="look">
+  <label for="opacity">透明</label>
+  <input type="range" id="opacity" min="20" max="100" step="5" value="100">
+  <output id="opacity-out" for="opacity">100%</output>
+  <p>整个面板一起变淡，往左拖越透明，透出后面的游戏。</p>
+</div>
+
+<button type="button" id="mini" title="Ludus Lunae：点一下展开，按住可以拖">
+  <svg viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M14.6 2.6a9.6 9.6 0 1 0 6.9 16.2A8 8 0 0 1 14.6 2.6z"/></svg>
+  <i class="dot"></i>
+</button>
+
+<ul id="log"><li id="empty">还没有消息。在下面打一句话试试：中文输入法组字时按 Enter 只会上屏，不会误发。</li></ul>
+
+<form id="form">
+  <textarea id="input" rows="1" data-tpl-placeholder="和 {agent} 说点什么…" title="Enter 发送，Shift+Enter 换行，Esc 回到游戏" autocomplete="off"></textarea>
+  <button id="send" type="submit">发送</button>
+</form>
+
+<script>
+const $ = (id) => document.getElementById(id);
+const log = $('log'), input = $('input'), form = $('form'), status = $('status');
+const seen = new Set();
+const params = new URLSearchParams(location.search);
+
+// ---- 名字：人的名字和 agent 的默认名字，聊天服务的 SSE hello 里带来（LUDUS_USER_NAME / LUDUS_AGENT_NAME）；没拿到就是 user / agent ----
+let names = { user: 'user', agent: 'agent' };
+const fillNames = (tpl) => tpl.replace(/\{(user|agent)\}/g, (_, k) => names[k]);
+function applyNames(next) {
+  if (next && typeof next === 'object') {
+    for (const k of ['user', 'agent']) if (typeof next[k] === 'string' && next[k].trim()) names[k] = next[k].trim();
+  }
+  document.querySelectorAll('[data-tpl]').forEach((el) => { el.textContent = fillNames(el.dataset.tpl); });
+  document.querySelectorAll('[data-tpl-title]').forEach((el) => { el.title = fillNames(el.dataset.tplTitle); });
+  document.querySelectorAll('[data-tpl-placeholder]').forEach((el) => { el.placeholder = fillNames(el.dataset.tplPlaceholder); });
+}
+applyNames();
+
+// 在 Electron 面板里时，preload 给了 window.ludus：发完或按 Esc 把焦点还给游戏
+const panel = params.has('panel') && window.ludus;
+if (panel) {
+  document.body.classList.add('panel');
+  panel.onFocusInput(() => input.focus());
+  // –：收成小按钮（也认旧名 hidePanel）；×：彻底关掉
+  const minimize = panel.minimize || panel.hidePanel;
+  if (minimize) {
+    $('minimize').hidden = false;
+    $('minimize').onclick = () => minimize();
+  }
+  if (panel.closePanel) {
+    $('close-panel').hidden = false;
+    $('close-panel').onclick = () => panel.closePanel();
+  }
+}
+const returnToGame = () => { if (panel) panel.returnToGame(); };
+
+// ---- 皮肤：记在本机浏览器里；没选过时用火山的女儿 ----
+const THEMES = { volcano: '火山的女儿', default: '默认' };
+const storedTheme = () => { try { return localStorage.getItem('ludus-theme'); } catch { return null; } };
+let theme;
+function applyTheme(name) {
+  theme = name in THEMES ? name : 'volcano';
+  [...document.body.classList].filter((c) => c.startsWith('theme-')).forEach((c) => document.body.classList.remove(c));
+  document.body.classList.add('theme-' + theme);
+  $('theme-toggle').title = '皮肤：' + THEMES[theme] + '（点击切换）';
+  try { localStorage.setItem('ludus-theme', theme); } catch {}
+}
+applyTheme(storedTheme() || params.get('theme') || 'volcano');
+$('theme-toggle').onclick = () => {
+  const names = Object.keys(THEMES);
+  applyTheme(names[(names.indexOf(theme) + 1) % names.length]);
+};
+
+// ---- 透明：整个面板窗口一起变淡。值记在面板那边（data/panel-state.json），只有面板里有 ----
+function showOpacity(value) {
+  const pct = Math.round(value * 100);
+  $('opacity').value = pct;
+  $('opacity-out').textContent = pct + '%';
+}
+if (panel && panel.setOpacity) {
+  $('look-toggle').hidden = false;
+  $('opacity').addEventListener('input', (e) => {
+    const value = Number(e.target.value) / 100;
+    panel.setOpacity(value);
+    showOpacity(value);
+  });
+  $('look-toggle').onclick = () => { $('diag').classList.remove('open'); $('look').classList.toggle('open'); };
+}
+
+// ---- 收起：面板折成一个小按钮，点一下展开，按住拖动；收着的时候 agent 说话，按钮上亮一个点 ----
+function setMode(mode) {
+  document.body.classList.toggle('mini', mode === 'mini');
+  if (mode !== 'mini') $('mini').classList.remove('unread');
+}
+if (panel && panel.onMode) {
+  panel.onMode(setMode);
+  panel.getState().then((s) => {
+    setMode(s.collapsed ? 'mini' : 'full');
+    $('opacity').min = Math.round(s.minOpacity * 100);
+    showOpacity(s.opacity);
+  });
+  const mini = $('mini');
+  mini.addEventListener('pointerdown', (e) => {
+    if (e.button !== 0) return;
+    mini.setPointerCapture(e.pointerId);
+    const x0 = e.screenX, y0 = e.screenY;
+    let moved = false;
+    const move = (ev) => {
+      if (!(ev.buttons & 1)) return;
+      const dx = ev.screenX - x0, dy = ev.screenY - y0;
+      if (!moved && Math.hypot(dx, dy) < 4) return;  // 手抖一下不算拖
+      moved = true;
+      panel.moveBy(dx, dy);
+    };
+    const up = () => {
+      mini.removeEventListener('pointermove', move);
+      mini.removeEventListener('lostpointercapture', up);
+      if (moved) panel.moveDone();
+      else panel.expand();
+    };
+    mini.addEventListener('pointermove', move);
+    mini.addEventListener('lostpointercapture', up);
+  });
+}
+
+// ---- 诊断：页面自己数事件（按键、输入法、焦点、可见性、心跳），上报给本地服务（data/diag.jsonl） ----
+const stats = {
+  keydown: 0, compStart: 0, compEnd: 0, lastComposed: '',
+  focus: 0, blur: 0, visibilityChanges: 0, hidden: document.hidden,
+  ticks: 0, ticksWhileHidden: 0, reconnects: 0, sent: 0, sendErrors: 0,
+};
+const env = () => ({
+  viewport: `${innerWidth}×${innerHeight}`, dpr: devicePixelRatio,
+  lang: navigator.language, hasFocus: document.hasFocus(),
+});
+
+function renderDiag() {
+  const rows = { UA: navigator.userAgent, ...env(), theme, ...stats };
+  $('diag-list').replaceChildren(...Object.entries(rows).flatMap(([k, v]) => {
+    const dt = document.createElement('dt'); dt.textContent = k;
+    const dd = document.createElement('dd'); dd.textContent = String(v);
+    return [dt, dd];
+  }));
+}
+
+function report(kind) {
+  fetch('/api/diag', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ kind, env: env(), stats }),
+  }).catch(() => {});
+}
+
+let lastReported = '';
+setInterval(() => {
+  const snap = JSON.stringify(stats);
+  if (snap !== lastReported) { lastReported = snap; report('periodic'); }
+}, 30000);
+
+$('diag-toggle').onclick = () => { renderDiag(); $('look').classList.remove('open'); $('diag').classList.toggle('open'); };
+$('diag-send').onclick = () => { report('manual'); $('diag-send').textContent = '已上报'; };
+
+// ---- 消息 ----
+const fmtTime = (iso) => new Date(iso).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' });
+
+function nearBottom() { return log.scrollHeight - log.scrollTop - log.clientHeight < 80; }
+
+// 一局游戏一段对话：since 之前的消息属于上一局，不显示
+let since = 0;
+const EMPTY_TEXT = '这一局还没有聊天。随时按 Alt+` 跟 {agent} 说话～';
+
+function clearLog() {
+  log.replaceChildren();
+  seen.clear();
+  const li = document.createElement('li');
+  li.id = 'empty';
+  li.dataset.tpl = EMPTY_TEXT;
+  li.textContent = fillNames(EMPTY_TEXT);
+  log.append(li);
+}
+
+function setSince(value) {
+  if (value === since) return;
+  since = value;
+  clearLog();
+}
+
+function render(msg) {
+  if (msg.id <= since || seen.has(msg.id)) return;
+  seen.add(msg.id);
+  $('empty')?.remove();
+  const li = document.createElement('li');
+  li.className = 'msg ' + (msg.from === 'agent' ? 'them' : 'me');
+  li.dataset.id = msg.id;
+  const meta = document.createElement('div');
+  meta.className = 'meta';
+  meta.textContent = `${msg.from === 'agent' ? msg.who || names.agent : names.user} · ${fmtTime(msg.ts)}`;  // who：哪个会话说的
+  const text = document.createElement('div');
+  text.className = 'text';
+  text.textContent = msg.text;
+  li.append(meta, text);
+  const stick = nearBottom();
+  const after = [...log.querySelectorAll('.msg[data-id]')].find((el) => Number(el.dataset.id) > msg.id);
+  log.insertBefore(li, after ?? null);
+  if (stick || msg.from !== 'agent') log.scrollTop = log.scrollHeight;
+}
+
+function renderError(text) {
+  const li = document.createElement('li');
+  li.className = 'msg them err';
+  const body = document.createElement('div');
+  body.className = 'text';
+  body.textContent = text;
+  li.append(body);
+  log.append(li);
+  log.scrollTop = log.scrollHeight;
+}
+
+async function loadHistory() {
+  try {
+    const res = await fetch('/api/history');
+    (await res.json()).forEach(render);
+  } catch {}
+}
+
+// ---- 实时流和「谁在」：标题栏第二行写现在挂着的会话（聊天服务的 presence），
+// 心跳（每秒一跳，看页面钉在覆盖层里时是不是实时刷新）放到鼠标停上去的提示里 ----
+let live = false;
+let present = [];
+let heartbeat = '';
+// 同一时间只有一个在玩（active）：它排在最前面、高亮，前面一个 ▶；别的挂着的跟在后面
+function others() {
+  const counts = new Map();
+  for (const p of present) if (!p.active) counts.set(p.label, (counts.get(p.label) || 0) + 1);
+  return [...counts].map(([label, n]) => (n > 1 ? `${label}×${n}` : label)).join('、');
+}
+const playing = () => present.find((p) => p.active);
+function whoText() {
+  if (!present.length) return '没有会话挂着';
+  const p = playing();
+  return [p ? `在玩：${p.label}` : '', others() ? `${p ? '也挂着' : '挂着'}：${others()}` : ''].filter(Boolean).join('；');
+}
+function setStatus(isLive) {
+  live = isLive;
+  status.classList.toggle('live', live);
+  const dot = document.createElement('span'); dot.className = 'dot'; dot.textContent = live ? '●' : '○';
+  const p = playing();
+  if (!live) {
+    status.replaceChildren(dot, ' 断开，重连中…');
+  } else if (!present.length) {
+    status.replaceChildren(dot, ' 没有会话挂着');
+  } else {
+    const parts = [dot, ' '];
+    if (p) {
+      const b = document.createElement('b'); b.className = 'playing'; b.textContent = `▶ ${p.label}`;
+      parts.push(b);
+    }
+    if (others()) parts.push(`${p ? '、' : ''}${others()}`);
+    status.replaceChildren(...parts);
+  }
+  status.title = `${whoText()}${heartbeat}`;
+}
+function setPresence(list) {
+  present = Array.isArray(list) ? list : [];
+  setStatus(live);
+}
+
+const es = new EventSource('/events');
+es.addEventListener('hello', (e) => {
+  const hello = JSON.parse(e.data);
+  applyNames(hello.names);
+  present = Array.isArray(hello.presence) ? hello.presence : [];
+  setStatus(true);
+  setSince(hello.since ?? 0);
+  loadHistory();
+});
+es.addEventListener('presence', (e) => setPresence(JSON.parse(e.data)));
+es.addEventListener('session', (e) => setSince(JSON.parse(e.data).since));
+es.addEventListener('modes', (e) => showModes(JSON.parse(e.data)));
+
+// ---- 模式开关：存在服务端的 modes.json，游戏插件读它 ----
+let modes = {};
+function showModes(next) {
+  modes = next;
+  document.querySelectorAll('#modes button').forEach((b) => b.classList.toggle('on', !!modes[b.dataset.mode]));
+}
+fetch('/api/modes').then((r) => r.json()).then(showModes).catch(() => {});
+document.querySelectorAll('#modes button').forEach((b) => {
+  b.onclick = () => fetch('/api/modes', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ [b.dataset.mode]: !modes[b.dataset.mode] }),
+  }).then((r) => r.json()).then(showModes).catch(() => {});
+});
+es.addEventListener('tick', (e) => {
+  const t = JSON.parse(e.data);
+  stats.ticks++;
+  if (document.hidden) stats.ticksWhileHidden++;
+  heartbeat = ` · 心跳 #${t.n} · ${new Date(t.ts).toLocaleTimeString('zh-CN')}`;
+  status.title = `${whoText()}${heartbeat}`;
+  if ($('diag').classList.contains('open')) renderDiag();
+});
+es.addEventListener('message', (e) => {
+  const msg = JSON.parse(e.data);
+  render(msg);
+  if (document.body.classList.contains('mini') && msg.from !== 'user') $('mini').classList.add('unread');
+});
+es.addEventListener('reload', () => location.reload());
+es.onerror = () => { stats.reconnects++; setStatus(false); };
+
+// ---- 输入：组字中的 Enter 交给输入法 ----
+let composing = false;
+input.addEventListener('compositionstart', () => { composing = true; stats.compStart++; });
+input.addEventListener('compositionend', (e) => {
+  composing = false; stats.compEnd++; stats.lastComposed = e.data;
+  if (stats.compEnd === 1) report('first-ime');
+});
+input.addEventListener('keydown', (e) => {
+  stats.keydown++;
+  const imeBusy = composing || e.isComposing || e.keyCode === 229;
+  if (e.key === 'Enter' && !e.shiftKey && !imeBusy) {
+    e.preventDefault();
+    form.requestSubmit();
+  } else if (e.key === 'Escape' && !imeBusy) {
+    returnToGame();
+  }
+});
+input.addEventListener('input', () => {
+  input.style.height = 'auto';
+  input.style.height = Math.min(input.scrollHeight + 2, 120) + 'px';  // +2：上下边框
+});
+
+form.addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const text = input.value.trim();
+  if (!text) return;
+  $('send').disabled = true;
+  try {
+    const res = await fetch('/api/send', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ text }),
+    });
+    if (!res.ok) throw new Error(`${res.status} ${await res.text()}`);
+    render(await res.json());
+    stats.sent++;
+    input.value = '';
+    input.dispatchEvent(new Event('input'));
+    returnToGame();
+  } catch (err) {
+    stats.sendErrors++;
+    renderError(`没发出去：${err.message}`);
+  } finally {
+    $('send').disabled = false;
+    if (!panel) input.focus();
+  }
+});
+
+// ---- 焦点与可见性：覆盖层开关、钉住时页面处在什么状态 ----
+addEventListener('focus', () => { stats.focus++; });
+addEventListener('blur', () => { stats.blur++; });
+document.addEventListener('visibilitychange', () => {
+  stats.visibilityChanges++; stats.hidden = document.hidden;
+  report('visibility');
+});
+
+report('load');
+if (!panel) input.focus();
+</script>
+</body>
+</html>
