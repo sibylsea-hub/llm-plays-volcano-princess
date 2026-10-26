@@ -202,6 +202,9 @@ try {
   check(tools.every((t) => /^[a-zA-Z0-9_-]{1,64}$/.test(t.name)), '工具名都是英文（各家客户端都认）');
   const instructions = client.getInstructions() || '';
   check(instructions.includes('say') && instructions.includes('面板'), 'instructions 里写了用 say 说话、面板', instructions);
+  check(instructions.includes('名字还是占位的') && instructions.includes('LUDUS_USER_NAME') && instructions.includes('LUDUS_AGENT_NAME'),
+    '名字：没设名字时，说明里提醒 agent 问问人、把两个名字设上', instructions);
+  check(/先问 user。$/.test(instructions), '名字：安全那句还在说明的最后', instructions.slice(-200));
 
   // ---- status ----
   let r = await call(client, 'status');
@@ -464,6 +467,8 @@ try {
   const tcTools = (await tc.listTools()).tools;
   check(tcTools.length > 10, '带 token 能连上、列工具');
   const named = tc.getInstructions() || '';
+  check(named.includes('名字还是占位的') && named.includes('LUDUS_AGENT_NAME') && !named.includes('LUDUS_USER_NAME'),
+    '名字：只设了人的名字，提醒里只剩 agent 的名字', named);
   check(named.includes('你在和 小月 一起玩') && named.includes('先问 小月') && !/\buser\b/.test(named),
     '名字：设了 LUDUS_USER_NAME=小月，说明里写的是小月，没有 user', named);
   check(tcTools.find((t) => t.name === 'say')?.description.includes('对 小月 说一句话'), '名字：say 的说明里也是小月',
@@ -683,6 +688,7 @@ try {
   const autoReadme = path.join(AUTO_DATA, 'selfplay', 'README.txt');
   for (let i = 0; i < 50 && !fs.existsSync(autoReadme); i++) await sleep(100);
   const autoText = fs.existsSync(autoReadme) ? fs.readFileSync(autoReadme, 'utf8') : '';
+  check(!autoText.includes('名字还是占位的') && !autoText.includes('{{NAMES_NOTE}}'), '名字：两个都设了，信箱说明里没有提醒', autoText.slice(0, 600));
   check(autoText.includes('来和 小月 一起玩') && autoText.includes('# 阿月（claude.ai）') && !/\buser\b/.test(autoText)
     && autoText.includes(path.join(AUTO_DATA, 'selfplay', 'mailbox')) && !autoText.includes('{{'),
   '名字：顺手起的 hub 写的 README.txt 用的是小月、阿月，信箱路径是这份 data 的', autoText.slice(0, 600));

@@ -2,6 +2,11 @@
 
 先在聊天面板上打开「agent 自己玩」（data/modes.json 的 selfplay 为 true），游戏里装着纯文字版的 Ludus Lunae 插件（0.3.7）。
 插件会自己往下翻对话、跳过小游戏、翻月中的过程页；要 agent 做决定的时候（对话选项、做什么事、排日程、弹窗）就停下来等。
+翻得多快是面板上「看剧情」的速度（chat-service/data/modes.json 的 readCps：每秒几个字，0 是自己翻，默认 12）。
+你读台词不用等，这个速度是给 user 看的，照 user 读字的快慢来：user 常常自己点击、按空格往下翻，是嫌慢；说没读完，是太快。
+user 可以自己在聊天面板里调，也可以由你动手改 readCps，插件马上就照新的翻。
+user 在游戏里自己点了按钮、翻了台词，会多一行「[user 点了] …」「[user 自己翻了 5 句台词]」：
+画面变了是 user 动的，不是自己跳的。
 
 用法：python -X utf8 plugin-text-only/tools/vp_player.py <命令> ...
 
@@ -162,9 +167,12 @@ class Game:
         """等到轮到 agent（phase 是 choose 或 click）。超时返回 None。"""
         deadline = time.monotonic() + timeout
         noted = ""
+        by_hand = False  # 这段时间里插件在等人翻页（看剧情设成了自己翻）
         while True:
             st = self.state()
             note = ""
+            if st and "等人" in (st.get("why") or ""):
+                by_hand = True
             if st is None or self.age(st) > STALE_SECONDS:
                 note = "游戏没开，或者插件没加载，等着……"
             elif st.get("phase") == "off":
@@ -175,7 +183,10 @@ class Game:
                 print(note, file=sys.stderr)
                 noted = note
             if time.monotonic() > deadline:
-                print(f"== 现在：等了 {timeout:.0f} 秒还没轮到你（{(st or {}).get('phase')}：{(st or {}).get('why')}），再 wait ==")
+                if by_hand:
+                    print(f"== 现在：等了 {timeout:.0f} 秒还没轮到你：在等 user 翻页（看剧情设成了自己翻），不是卡住了，再 wait ==")
+                else:
+                    print(f"== 现在：等了 {timeout:.0f} 秒还没轮到你（{(st or {}).get('phase')}：{(st or {}).get('why')}），再 wait ==")
                 return None
             time.sleep(0.3)
 
@@ -262,8 +273,47 @@ def fmt_items(items: list[dict], show_all: bool = True) -> str:
     return "\n".join(lines) if lines else "（没有）"
 
 
+def group_human(events: list[dict]) -> None:
+    """user 连着点同一个按钮（自己一页页翻过程页）合成一行：第一条记上几次，后面的标 _merged。
+    user 选的对话选项，插件接着还会记一条「[选了]」，和「[user 选了]」是同一件事，标 _merged 不再打。"""
+    prev = None
+    for e in events:
+        if e.get("type") == "chose" and prev is not None and prev.get("did") == "choose" and prev.get("label") == e.get("text"):
+            e["_merged"] = True
+            prev = None
+            continue
+        if e.get("type") != "human" or e.get("did") not in ("click", "choose"):
+            prev = None
+            continue
+        if prev is not None and (e.get("did"), e.get("label")) == (prev.get("did"), prev.get("label")):
+            prev["_times"] = prev.get("_times", 1) + 1
+            e["_merged"] = True
+            continue
+        prev = e
+
+
+def fmt_human(e: dict) -> str | None:
+    """user 用鼠标、键盘在游戏里动的（不是你点的）。"""
+    if e.get("_merged"):
+        return None
+    did, times = e.get("did"), e.get("_times", 1)
+    more = f"（连着 {times} 次）" if times > 1 else ""
+    if did == "click":
+        n = f"{e['n']} 号 " if e.get("n") else ""
+        return f"[user 点了] {n}{e.get('label')}{more}"
+    if did == "choose":
+        return f"[user 选了] {e.get('label')}{more}"
+    if did == "lines":
+        return f"[user 自己翻了 {e.get('count')} 句台词]"
+    if did == "skip":
+        return f"[user 按住 Ctrl 快进了 {e.get('count')} 句台词]"
+    return None
+
+
 def fmt_event(e: dict) -> str | None:
     t = e.get("type")
+    if t == "human":
+        return fmt_human(e)
     if t == "line":
         say = (e.get("say") or "").replace("\n", "\n    ")
         return f"{e.get('who')}：{say}"
@@ -271,7 +321,7 @@ def fmt_event(e: dict) -> str | None:
         what = f"（{e['what']}）" if e.get("what") else ""
         return f"[选项{what}] " + " / ".join(e.get("options") or [])
     if t == "chose":
-        return f"[选了] {e.get('text')}"
+        return None if e.get("_merged") else f"[选了] {e.get('text')}"
     if t in ("click", "choose"):
         return f"> {'点了' if t == 'click' else '选了'} {e.get('n')} 号 {e.get('label')}"
     if t in ("month", "load"):
@@ -312,6 +362,7 @@ def fmt_event(e: dict) -> str | None:
 def print_events(events: list[dict], g: "Game | None" = None) -> None:
     """打印事件。给了 g 时，换月那条附上和上一次换月（或读档）比变了多少，基准记在 cursor.json。"""
     base = g.cursor().get("month_state") if g else None
+    group_human(events)
     for e in events:
         if e.get("type") in ("month", "load"):
             if e.get("type") == "month" and base:

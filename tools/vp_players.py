@@ -32,6 +32,21 @@ RESERVED = {"CON", "PRN", "AUX", "NUL", *(f"COM{i}" for i in range(1, 10)), *(f"
 USER_NAME = (os.environ.get("LUDUS_USER_NAME") or "").strip() or "user"
 AGENT_NAME = (os.environ.get("LUDUS_AGENT_NAME") or "").strip() or "agent"
 
+
+def names_note() -> str:
+    """名字还是默认的（没设 LUDUS_USER_NAME / LUDUS_AGENT_NAME）时，提醒 agent 问问人、把名字设上的一句话；都设了就是空的。
+    和 hub（mcp-hub/tools.mjs 的 namesNote）、channel 说明里的是同一句话。"""
+    said, env = [], []
+    if not (os.environ.get("LUDUS_USER_NAME") or "").strip():
+        said.append("「user」是陪你玩的人")
+        env.append("LUDUS_USER_NAME（TA 的名字）")
+    if not (os.environ.get("LUDUS_AGENT_NAME") or "").strip():
+        said.append("「agent」是你")
+        env.append("LUDUS_AGENT_NAME（你的名字）")
+    if not said:
+        return ""
+    return f"名字还是占位的：说明里{'、'.join(said)}。可以把 {'、'.join(env)}设上（docs/安装.md 第五节「名字」：setx 一次，重开聊天服务、hub 和你的客户端），之后满眼都是你们俩的名字啦。"
+
 # 写死的字里的「user」：前后不是英文字母、数字（「user_name」「users」不算）；两边挨着中文的空格一起带上，好按名字去留
 _USER_WORD = re.compile(r"((?<=[^\x00-\x7f]) )?(?<![A-Za-z0-9_])user(?![A-Za-z0-9_])( (?=[^\x00-\x7f]))?")
 

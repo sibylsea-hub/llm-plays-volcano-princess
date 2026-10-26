@@ -30,7 +30,7 @@ node say.mjs "话"           以现在这个玩家的名字往页面上回一句
 |---|---|
 | `chat.jsonl` | 全部消息：`{"id","ts","from":"agent|user","text","who","client"}`，`who` 是哪个 agent 说的 |
 | `token` | 口令，第一次启动时生成。agent 回话（`/api/reply`）、报到（`/api/presence`）、开新的一局（`/api/session`）要带 |
-| `modes.json` | 面板上的开关：`selfplay`（agent 自己玩）、`packByScene`（边玩边聊）、`skipGames`（跳过小游戏）。插件读它。第一次启动时建，`skipGames` 默认开着（限时小游戏 agent 一步一步点来不及；面板上的开关、`skip off` 可以关） |
+| `modes.json` | 面板上的开关：`selfplay`（agent 自己玩）、`packByScene`（边玩边聊）、`skipGames`（跳过小游戏）、`readCps`（看剧情：agent 自己玩时每秒翻几个字，0 是自己翻）。插件读它。第一次启动时建，`skipGames` 默认开着（限时小游戏 agent 一步一步点来不及；面板上的开关、`skip off` 可以关），`readCps` 默认 12 |
 | `game-events.jsonl` | 插件写的陪玩同步：人自己玩时的台词、选项、换场景和换月的包。channel 读它 |
 | `presence.json` | 谁挂着（最近十分钟有动静的会话），面板据此出不出来 |
 | `active.json` | 现在在玩的是哪个会话 |

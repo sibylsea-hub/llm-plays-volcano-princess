@@ -52,20 +52,44 @@ public class LudusLunaePlugin : BaseUnityPlugin
     // 跳过小游戏：没写这个键时算开着，和聊天服务新建 modes.json 时写的默认一样（限时小游戏 agent 一步一步点来不及；面板上的开关、skip off 可以关）
     internal static bool SkipGames { get { return Mode("skipGames", true); } }
 
+    // 看剧情的速度（面板上「看剧情」那根滑条）：自己玩时每秒读几个字，插件按这个翻台词、翻页；
+    // 0 是自己翻（插件不翻）。没写时 12，和聊天服务新建 modes.json 时写的一样
+    internal static float ReadCps { get { return Number("readCps", 12f); } }
+
+    static string ModesText()
+    {
+        var path = Path.Combine(dataDir.Value, "modes.json");
+        if (!File.Exists(path)) return "";
+        var stamp = File.GetLastWriteTimeUtc(path);
+        if (stamp != modesStamp)
+        {
+            modesText = File.ReadAllText(path, Utf8).Replace(" ", "");
+            modesStamp = stamp;
+        }
+        return modesText;
+    }
+
     static bool Mode(string key, bool fallback)
     {
         try
         {
-            var path = Path.Combine(dataDir.Value, "modes.json");
-            if (!File.Exists(path)) return fallback;
-            var stamp = File.GetLastWriteTimeUtc(path);
-            if (stamp != modesStamp)
-            {
-                modesText = File.ReadAllText(path, Utf8).Replace(" ", "");
-                modesStamp = stamp;
-            }
-            if (modesText.Contains("\"" + key + "\":true")) return true;
-            if (modesText.Contains("\"" + key + "\":false")) return false;
+            var text = ModesText();
+            if (text.Contains("\"" + key + "\":true")) return true;
+            if (text.Contains("\"" + key + "\":false")) return false;
+        }
+        catch (Exception e)
+        {
+            Log.LogWarning("读 modes.json 失败：" + e.Message);
+        }
+        return fallback;
+    }
+
+    static float Number(string key, float fallback)
+    {
+        try
+        {
+            var m = System.Text.RegularExpressions.Regex.Match(ModesText(), "\"" + key + "\":(-?[0-9]+(?:\\.[0-9]+)?)");
+            if (m.Success) return float.Parse(m.Groups[1].Value, CultureInfo.InvariantCulture);
         }
         catch (Exception e)
         {

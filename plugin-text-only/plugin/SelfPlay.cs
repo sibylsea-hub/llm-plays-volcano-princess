@@ -6,7 +6,8 @@
 //   inbox.jsonl   工具写命令：{"id","cmd","n","snap","text"}
 //   outbox.jsonl  插件写回复：{"id","ok","text",…}
 //   events.jsonl  插件写：台词、选项、选择、换月、跳过的小游戏……工具的 wait 从上次读到的地方往后打印。
-// 对话自动往下翻（停多久看字数）；轮到 agent 的条件是：没有对话在播、没在跳小游戏，画面上能点的东西 1 秒没变。
+// 对话自动往下翻（停多久看字数和面板上「看剧情」的速度）；轮到 agent 的条件是：没有对话在播、没在跳小游戏，画面上能点的东西 1 秒没变。
+// 人用真鼠标、真键盘动了游戏（点按钮、翻台词），记成 human 事件告诉 agent；人自己翻的时候插件停手，歇一阵再接着翻。
 // 点按钮走 Unity 自己的事件派发（ExecuteEvents），和鼠标点一样：UiBtn、Unity Button、地图上的人物都能点。
 // 除了按编号点，还有按名字操作的文字命令（look / acts / plan / go / touch / pick / course / yes / no，在 TextPlay.cs）。
 // 自己玩开着时游戏在后台也继续跑（Application.runInBackground），user 切到面板打字时 agent 不用停。
@@ -53,7 +54,7 @@ static class SelfPlay
 {
     const float ScanEvery = 0.25f, HeartbeatEvery = 5f;
 
-    static ConfigEntry<float> readSpeed, stableSeconds;
+    static ConfigEntry<float> stableSeconds;
 
     internal static bool Muted;  // 探悬停提示、模拟移入移出时不出声
 
@@ -61,9 +62,9 @@ static class SelfPlay
     static float nextScan, nextHeartbeat;
     static long inboxOffset = -1;
 
-    // 一行台词什么时候出现、多长：自动翻页用
+    // 一行台词什么时候出现、算几个字：自动翻页用
     static float lineShownAt = -1f;
-    static int lineLength;
+    static float lineUnits;
 
     // 当前清单：最近一次发给工具的那份，click N 按它找按钮
     internal class Item
@@ -96,8 +97,7 @@ static class SelfPlay
 
     internal static void Init(ConfigFile config)
     {
-        readSpeed = config.Bind("Selfplay", "ReadSeconds", 1f,
-            "自己玩时每句台词停多久：1 是按字数算的正常速度（1 到 4 秒），0.5 快一倍，0 立刻翻页");
+        // 每句台词停多久不在这里配，在面板上「看剧情」那根滑条（modes.json 的 readCps）
         stableSeconds = config.Bind("Selfplay", "StableSeconds", 1f,
             "画面上能点的东西多久没变，才算轮到 agent（秒）");
         var go = new GameObject("LudusLunaeSelfplay");
@@ -134,6 +134,7 @@ static class SelfPlay
         }
         PollInbox();
         WatchPlace();
+        if (humanLines > 0 && !ChatBusy()) FlushHuman();  // 人翻的那一段对话播完了：攒的几句记成一条
         try { LudusLunaePlugin.CompanionTick(ChatBusy() || MenuOpen(), now); } catch { }
         if (!on)
         {
@@ -202,15 +203,34 @@ static class SelfPlay
     {
         if (type != LogType.normal && type != LogType.showNature) return;
         lineShownAt = Time.unscaledTime;
-        lineLength = content == null ? 0 : content.Length;
+        lineUnits = ReadUnits(Clean(content, int.MaxValue));
     }
 
-    static float LineDelay()
+    // 看剧情的速度：agent 读台词不用等（事件里都有），这些停顿全是留给旁边看的人的，所以按人读的速度、由人在面板上拖。
+    // 停多久 = 字数 ÷ 每秒几个字，按比例、不封顶（封顶的话，长句不管多长都只给那么几秒，人还没读完就翻过去了）。
+    // 0 是自己翻：插件不翻台词、不翻页，等人按空格、点对话框
+    internal static bool ManualRead { get { return LudusLunaePlugin.ReadCps <= 0f; } }
+
+    // 算几个字：英文字母、数字、空格按三分之一个字（读一个字母比读一个汉字快得多），别的（汉字、假名、谚文、全角标点）一个算一个
+    internal static float ReadUnits(string s)
     {
-        float k = readSpeed.Value;
-        if (k <= 0f) return 0.1f;
-        return Mathf.Clamp(0.8f + 0.05f * lineLength, 1f, 4f) * k;
+        if (string.IsNullOrEmpty(s)) return 0f;
+        float n = 0f;
+        foreach (var ch in s) n += ch < 0x0250 ? 1f / 3f : 1f;
+        return n;
     }
+
+    // least：最少停几秒，两三个字的句子不至于一闪而过
+    internal static float ReadDelay(float units, float least = 1f)
+    {
+        float cps = LudusLunaePlugin.ReadCps;
+        if (cps <= 0f) return float.MaxValue;
+        return Mathf.Max(least, units / cps);
+    }
+
+    // 人最近一次自己点、自己翻的时候：这一句、这一页从这一刻重新计时，插件不和人抢着翻。
+    // 不另外停一阵：那样人点完一个按钮，后面的台词也干等着，像卡住了
+    internal static float HumanAt { get { return humanAt; } }
 
     static Button ChatButton()
     {
@@ -234,10 +254,96 @@ static class SelfPlay
         var btn = ChatButton();
         if (btn == null || !btn.interactable || !btn.gameObject.activeInHierarchy) return;
         if (lineShownAt < 0) lineShownAt = now;  // 没赶上这一句的开头（或上次翻页没翻动），从现在开始计时
-        if (now - lineShownAt < LineDelay()) return;
+        if (ManualRead) return;
+        if (now - Mathf.Max(lineShownAt, humanAt) < ReadDelay(lineUnits)) return;  // 人刚按过空格、点过东西：从那一刻重新算
         lineShownAt = -1f;  // 等下一句的 CheckControl 再设
         // 和游戏里按空格一样（ChatSys.Update：对话框背景能点时按空格就 ClickToNextChat）
-        ChatSys.Instan.ClickToNextChat();
+        Pressing++;
+        try { ChatSys.Instan.ClickToNextChat(); }
+        finally { Pressing--; }
+    }
+
+    // ---- 人自己动手 ----
+    // 人用鼠标点了按钮、按空格翻了台词，插件不说的话，agent 只看到清单换了版、台词往前走了，会以为画面自己跳了。
+    // 插件自己点按钮都走 Press（ExecuteEvents 直接派发，不经过鼠标），自己翻台词走 AutoAdvance，这两处举着 Pressing；
+    // 按钮被点、台词被翻的那一下有钩子（HumanClickPatch、HumanLinePatch），没举着就是人。不用每帧去问键盘鼠标：
+    // 游戏把点到的是哪个按钮直接交到钩子手上，没人动的时候钩子一行都不跑
+    internal static int Pressing;
+    static float humanAt = -1000f;
+    static int humanLines, humanFrame = -1, lastHumanSnap = -1;
+    static float lastHumanAt = -1000f;
+    static bool humanSkipped;
+    static GameObject humanGo;
+    static string lastHuman;
+
+    internal static void HumanClick(GameObject go)
+    {
+        if (Pressing > 0 || go == null || !On) return;
+        if (Time.frameCount == humanFrame && go == humanGo) return;  // UiBtn 和 Unity Button 常挂在同一个物体上，一次点击两个钩子都响
+        humanFrame = Time.frameCount;
+        humanGo = go;
+        humanAt = Time.unscaledTime;
+        var chat = ChatButton();
+        if (chat != null && go == chat.gameObject) { humanLines++; return; }  // 点对话框：和按空格一样，翻一句
+        FlushHuman();
+        TextPlay.HumanPressed(go);  // 人翻的是插件等着翻的那一页：页上的字照样记下来
+        string did = "click", what;
+        Item it = null;
+        if (MenuOpen())
+        {
+            it = FindGo(ReadMenu(), go);
+            if (it != null) did = "choose";
+        }
+        if (it == null) it = FindGo(snapshot, go);
+        if (it != null) what = did == "choose" ? it.label : (it.label != "" ? "「" + it.label + "」" : "") + it.kind;
+        else if (go.GetComponent<sceneMove>() != null) what = "场景里的空地（人走过去）";
+        else
+        {
+            bool blocked;
+            var label = LabelOf(go);
+            what = (label != "" ? "「" + label + "」" : "") + KindOf(go, out blocked);
+        }
+        what = what.Replace("（会自动点）", "");  // 清单上提醒 agent 不用点的话，人点了就不用说了
+        lastHuman = what;
+        lastHumanSnap = snapId;
+        lastHumanAt = Time.unscaledTime;
+        // 在 agent 手里那一版清单上的，带上编号
+        var n = did == "click" && it != null ? "," + Json.Field("n", it.n) : "";
+        Event("human", Json.Field("did", did) + "," + Json.Field("label", what) + n);
+    }
+
+    // skip：按住 Ctrl 快进（游戏自己的 SkipToNextChat）
+    internal static void HumanLine(bool skip)
+    {
+        if (Pressing > 0 || !On) return;
+        // ClickToNextChat 游戏自己也调（选了选项接着播、等待和拉幕播完），只有按空格的那一帧算人；点对话框在 HumanClick 里算过了
+        if (!skip && !Input.GetKeyDown(KeyCode.Space)) return;
+        humanAt = Time.unscaledTime;
+        humanLines++;
+        if (skip) humanSkipped = true;
+    }
+
+    // 人翻的那几句攒成一条：对话播完、或者人又点了别的时记
+    static void FlushHuman()
+    {
+        if (humanLines == 0) return;
+        Event("human", Json.Field("did", humanSkipped ? "skip" : "lines") + "," + Json.Field("count", humanLines));
+        humanLines = 0;
+        humanSkipped = false;
+    }
+
+    static Item FindGo(List<Item> list, GameObject go)
+    {
+        foreach (var it in list) if (it.go == go) return it;
+        return null;
+    }
+
+    // 清单换版是因为有人在游戏里点过，就说是谁动的，不然像是画面自己跳了
+    static string Changed(int given)
+    {
+        // 只算最近半分钟里点的：更早点过一下、后来是游戏自己换的画面，不算人点的
+        var who = lastHuman != null && lastHumanSnap >= given && Time.unscaledTime - lastHumanAt < 30f ? "刚才有人在游戏里点了" + lastHuman + "，" : "";
+        return who + "清单已经换成第 " + snapId + " 版了（你看的是第 " + given + " 版）";
     }
 
     // ---- 现在轮到谁 ----
@@ -250,7 +356,7 @@ static class SelfPlay
         if (menuOpen) { }  // 选项开着就是在等 agent 回答，哪怕后面还排着对话（神秘商人那种大头像对话框）
         else if (ChatSys.chatQueue.Count > 0) busy = "对话排队中";
         else if (showing && type != LogType.select && type != LogType.battle && type != LogType.goonBtn)
-            busy = "对话在播";
+            busy = ManualRead ? "对话在播（看剧情设成了自己翻，等人按空格）" : "对话在播";
 
         if (busy == null) busy = TextPlay.Busy();
         string sig;
@@ -1121,7 +1227,7 @@ static class SelfPlay
             case "click":
                 {
                     if (c.snap != 0 && c.snap != snapId)
-                        return Json.Field("ok", false) + "," + Json.Field("text", "清单已经换成第 " + snapId + " 版了（你看的是第 " + c.snap + " 版），看下面的新清单再点")
+                        return Json.Field("ok", false) + "," + Json.Field("text", Changed(c.snap) + "，看下面的新清单再点")
                             + "," + ItemsJson();
                     var it = Find(snapshot, c.n);
                     if (it == null) return Fail("第 " + snapId + " 版清单里没有 " + c.n + " 号");
@@ -1139,7 +1245,7 @@ static class SelfPlay
             case "tip":
                 {
                     if (c.snap != 0 && c.snap != snapId)
-                        return Json.Field("ok", false) + "," + Json.Field("text", "清单已经换成第 " + snapId + " 版了（你看的是第 " + c.snap + " 版），看下面的新清单")
+                        return Json.Field("ok", false) + "," + Json.Field("text", Changed(c.snap) + "，看下面的新清单")
                             + "," + ItemsJson();
                     var it = Find(snapshot, c.n);
                     if (it == null) return Fail("第 " + snapId + " 版清单里没有 " + c.n + " 号");
@@ -1154,7 +1260,7 @@ static class SelfPlay
             case "slide":
                 {
                     if (c.snap != 0 && c.snap != snapId)
-                        return Json.Field("ok", false) + "," + Json.Field("text", "清单已经换成第 " + snapId + " 版了（你看的是第 " + c.snap + " 版），看下面的新清单")
+                        return Json.Field("ok", false) + "," + Json.Field("text", Changed(c.snap) + "，看下面的新清单")
                             + "," + ItemsJson();
                     var it = Find(snapshot, c.n);
                     if (it == null || it.go == null) return Fail("第 " + snapId + " 版清单里没有 " + c.n + " 号");
@@ -1285,7 +1391,9 @@ static class SelfPlay
         Muted = true;
         try { ExecuteEvents.Execute(go, ped, ExecuteEvents.pointerEnterHandler); } catch { }
         Muted = false;
-        ExecuteEvents.Execute(go, ped, ExecuteEvents.pointerClickHandler);
+        Pressing++;  // 钩子看到举着，就知道这一下不是人点的
+        try { ExecuteEvents.Execute(go, ped, ExecuteEvents.pointerClickHandler); }
+        finally { Pressing--; }
         if (go != null && go.activeInHierarchy)
         {
             Muted = true;
@@ -1429,4 +1537,44 @@ static class MutePatch
     }
 
     static bool Prefix() { return !SelfPlay.Muted; }
+}
+
+// 人点了哪个按钮：游戏里能点的东西都在这几个 OnPointerClick 上接鼠标（SelfPlay.IsClicker 认的也是这几种）。
+// 插件自己点时举着 SelfPlay.Pressing，HumanClick 不记
+[HarmonyPatch]
+static class HumanClickPatch
+{
+    static IEnumerable<MethodBase> TargetMethods()
+    {
+        yield return AccessTools.Method(typeof(UiBtn), "OnPointerClick");
+        yield return AccessTools.Method(typeof(Button), "OnPointerClick");
+        yield return AccessTools.Method(typeof(mapBtn), "OnPointerClick");
+        yield return AccessTools.Method(typeof(FightEnemy), "OnPointerClick");
+        yield return AccessTools.Method(typeof(sceneMove), "OnPointerClick");
+    }
+
+    static void Prefix(MonoBehaviour __instance)
+    {
+        try { SelfPlay.HumanClick(__instance.gameObject); }
+        catch (Exception e) { LudusLunaePlugin.Log.LogWarning("记人点的按钮出错：" + e.Message); }
+    }
+}
+
+// 人按空格翻台词、按住 Ctrl 快进（ChatSys.Update 里游戏自己读键盘，翻页走这两个方法）
+[HarmonyPatch(typeof(ChatSys), "ClickToNextChat")]
+static class HumanLinePatch
+{
+    static void Prefix()
+    {
+        try { SelfPlay.HumanLine(false); } catch { }
+    }
+}
+
+[HarmonyPatch(typeof(ChatSys), "SkipToNextChat")]
+static class HumanSkipPatch
+{
+    static void Prefix()
+    {
+        try { SelfPlay.HumanLine(true); } catch { }
+    }
 }

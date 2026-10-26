@@ -3,7 +3,8 @@
 // 陪玩同步：攒下这个月出现的每句台词和每次选项，换月（DataSys.TransTurn）时连同状态打成一行 JSON，
 // 追加到聊天服务 data 文件夹里的 game-events.jsonl；agent 那边盯着这个文件，月底一次读完。
 // 开关在同一个文件夹的 modes.json（面板上切）：selfplay = agent 自己玩（SelfPlay.cs、TextPlay.cs），关着就是 user 在玩、开陪玩同步；
-// skipGames = 跳过小游戏（MiniGames.cs，谁玩都能开；没写时算开着）；autoFight = 战斗交给队友（Fight.cs）。陪玩同步没有单独的开关，selfplay 关着就开。
+// skipGames = 跳过小游戏（MiniGames.cs，谁玩都能开；没写时算开着）；autoFight = 战斗交给队友（Fight.cs）；readCps = 看剧情的速度。
+// 陪玩同步没有单独的开关，selfplay 关着就开。
 // 不走 ChatMenu 的选择（开局爸爸的身份、后来爸爸的目标和工作）也在这里记，开场动画的旁白（ShowSys.ShowLine）记成旁白。
 // 所有挂钩都包在 try/catch 里：插件出错只写日志，不影响游戏。
 using System;
@@ -19,7 +20,7 @@ using HarmonyLib;
 [BepInPlugin("ludus-lunae.volcano-princess", "Ludus Lunae", Version)]
 public class LudusLunaePlugin : BaseUnityPlugin
 {
-    public const string Version = "0.4.11";
+    public const string Version = "0.4.12";
     internal static ManualLogSource Log;
     static ConfigEntry<string> dataDir;
     static readonly UTF8Encoding Utf8 = new UTF8Encoding(false);
@@ -83,20 +84,44 @@ public class LudusLunaePlugin : BaseUnityPlugin
         }
     }
 
+    // 看剧情的速度（面板上「看剧情」那根滑条）：自己玩时每秒读几个字，插件按这个翻台词、翻页；0 是自己翻（插件不翻）。
+    // 没写时 12，和聊天服务新建 modes.json 时写的一样
+    internal static float ReadCps { get { return Number("readCps", 12f); } }
+
+    static string ModesText()
+    {
+        var path = Path.Combine(dataDir.Value, "modes.json");
+        if (!File.Exists(path)) return "";
+        var stamp = File.GetLastWriteTimeUtc(path);
+        if (stamp != modesStamp)
+        {
+            modesText = File.ReadAllText(path, Utf8).Replace(" ", "");
+            modesStamp = stamp;
+        }
+        return modesText;
+    }
+
     static bool Mode(string key, bool fallback)
     {
         try
         {
-            var path = Path.Combine(dataDir.Value, "modes.json");
-            if (!File.Exists(path)) return fallback;
-            var stamp = File.GetLastWriteTimeUtc(path);
-            if (stamp != modesStamp)
-            {
-                modesText = File.ReadAllText(path, Utf8).Replace(" ", "");
-                modesStamp = stamp;
-            }
-            if (modesText.Contains("\"" + key + "\":true")) return true;
-            if (modesText.Contains("\"" + key + "\":false")) return false;
+            var text = ModesText();
+            if (text.Contains("\"" + key + "\":true")) return true;
+            if (text.Contains("\"" + key + "\":false")) return false;
+        }
+        catch (Exception e)
+        {
+            Log.LogWarning("读 modes.json 失败：" + e.Message);
+        }
+        return fallback;
+    }
+
+    static float Number(string key, float fallback)
+    {
+        try
+        {
+            var m = System.Text.RegularExpressions.Regex.Match(ModesText(), "\"" + key + "\":(-?[0-9]+(?:\\.[0-9]+)?)");
+            if (m.Success) return float.Parse(m.Groups[1].Value, CultureInfo.InvariantCulture);
         }
         catch (Exception e)
         {

@@ -46,6 +46,7 @@ await client.connect(new StdioClientTransport({ command: process.execPath, args:
 console.log('channel 声明的能力：', JSON.stringify(client.getServerCapabilities()));
 console.log('工具：', (await client.listTools()).tools.map((t) => t.name).join(', '));
 if (!(client.getInstructions() || '').includes('你在陪 user 玩游戏')) fail('没设名字时，说明里写的不是 user');
+if (!(client.getInstructions() || '').includes('名字还是占位的')) fail('没设名字时，说明里没提醒 agent 把名字设上');
 await sleep(800);
 
 const presence = async () => (await (await fetch(`${ORIGIN}/api/presence`)).json()).map((p) => p.label);
@@ -81,6 +82,7 @@ await named.connect(new StdioClientTransport({
 const namedText = named.getInstructions() || '';
 console.log('设了名字的说明（第一行）：', namedText.split('\n')[0]);
 if (!namedText.includes('你在陪 小月 玩游戏') || /\buser\b/.test(namedText)) fail('设了 LUDUS_USER_NAME=小月，说明里没换过来');
+if (namedText.includes('名字还是占位的')) fail('两个名字都设了，说明里还在提醒设名字');
 if (!(await named.listTools()).tools.find((t) => t.name === 'reply')?.description.includes('小月')) fail('reply 的说明里没换成小月');
 let label = false;
 for (let i = 0; i < 20 && !label; i++) { label = (await presence()).includes('阿月（终端）'); if (!label) await sleep(200); }

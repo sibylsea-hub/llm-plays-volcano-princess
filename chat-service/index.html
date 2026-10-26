@@ -70,10 +70,10 @@
 
   /* 面板模式（Electron 置顶窗口里）：标题栏可以拖动窗口，气泡更宽 */
   body.panel header { -webkit-app-region: drag; user-select: none; }
-  body.panel header button, body.panel #diag, body.panel #look { -webkit-app-region: no-drag; }
+  body.panel header button, body.panel #diag, body.panel #look, body.panel #read { -webkit-app-region: no-drag; }
   body.panel .msg { max-width: 92%; }
 
-  #diag, #look {
+  #diag, #look, #read {
     display: none; position: absolute; top: 44px; right: 10px; z-index: 2; width: min(420px, calc(100% - 20px));
     background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius);
     padding: 10px 12px; font-size: 12px; color: var(--muted); box-shadow: 0 8px 24px rgba(0,0,0,.4);
@@ -83,6 +83,21 @@
   #look input { width: 100%; margin: 0; accent-color: var(--accent); }
   #look output { color: var(--text); text-align: right; font-variant-numeric: tabular-nums; }
   #look p { grid-column: 1 / -1; margin: 0; line-height: 1.6; }
+
+  /* 看剧情：agent 自己玩时台词、翻页停多久（modes.json 的 readCps，每秒几个字；0 是自己翻）。下面放一句示范，拖的时候照这个速度播 */
+  #read.open { display: grid; grid-template-columns: auto 1fr 5.5em; align-items: center; gap: 8px 10px; }
+  #read input { width: 100%; margin: 0; accent-color: var(--accent); }
+  #read output { color: var(--text); text-align: right; font-variant-numeric: tabular-nums; }
+  #read p { grid-column: 1 / -1; margin: 0; line-height: 1.6; }
+  #read-demo {
+    grid-column: 1 / -1; position: relative; min-height: 4.6em; padding: 8px 10px 12px; border-radius: 8px;
+    background: var(--bg); border: 1px solid var(--line); color: var(--text); font-size: 13px; line-height: 1.6; cursor: default;
+  }
+  #read-demo b { display: block; color: var(--accent); font-size: 12px; }
+  #read-demo i { position: absolute; left: 10px; right: 10px; bottom: 5px; height: 2px; border-radius: 1px; background: var(--line); overflow: hidden; }
+  #read-demo i::after { content: ""; position: absolute; inset: 0; transform-origin: left; transform: scaleX(var(--done, 0)); background: var(--accent); }
+  #read-demo.manual { cursor: pointer; }
+  #read-demo.manual i { display: none; }
 
   /* 收起：整个窗口折成一个小按钮，点一下展开，按住可以拖（只在面板里有） */
   #mini { display: none; }
@@ -103,7 +118,7 @@
   #diag dd { margin: 0; color: var(--text); overflow-wrap: anywhere; font-variant-numeric: tabular-nums; }
 
   /* 模式开关：一排小按钮，开着的高亮 */
-  #modes { position: relative; z-index: 1; display: flex; gap: 6px; padding: 6px 14px; border-bottom: 1px solid var(--line); background: var(--panel); }
+  #modes { position: relative; z-index: 1; display: flex; flex-wrap: wrap; gap: 6px; padding: 6px 14px; border-bottom: 1px solid var(--line); background: var(--panel); }
   #modes button {
     font: inherit; font-size: 12px; padding: 2px 10px; border-radius: 999px; cursor: pointer;
     border: 1px solid var(--line); background: none; color: var(--muted);
@@ -187,7 +202,7 @@
   }
   .theme-volcano form button:hover:not(:disabled) { filter: brightness(1.06); }
 
-  .theme-volcano #diag, .theme-volcano #look { background: var(--panel); border: 2px solid var(--wood); }
+  .theme-volcano #diag, .theme-volcano #look, .theme-volcano #read { background: var(--panel); border: 2px solid var(--wood); }
   .theme-volcano.mini #mini {
     background: linear-gradient(#3b1c10, #28120a); color: #e8b860;
     box-shadow: inset 0 0 0 2px var(--wood), inset 0 0 0 3px rgba(163, 105, 43, .45);
@@ -252,6 +267,7 @@
   <button type="button" data-mode="selfplay" data-tpl="{agent} 自己玩" data-tpl-title="开：{agent} 自己玩（插件翻对话、停在要做决定的地方，{agent} 用 vp_player.py 操作）。关：你玩，每到月底把这个月的台词和状态发给 {agent}"></button>
   <button type="button" data-mode="packByScene" data-tpl-title="你玩的时候（{agent} 自己玩关着）：开着就是边玩边聊，离开一个地方、或者一段长剧情播完，{agent} 就看得到刚才发生的事；关着就月底一起看">边玩边聊</button>
   <button type="button" data-mode="skipGames" title="跳过小游戏（骰子、赛马、舞会、演戏、鸟节画画和算术、钓鱼），直接给最好的结果。谁玩都能开；跳过时得到的成就不点亮">跳过小游戏</button>
+  <button type="button" id="read-toggle" title="agent 自己玩时，每句台词、每一页停多久">看剧情</button>
 </div>
 
 <div id="diag" aria-live="polite">
@@ -264,6 +280,14 @@
   <input type="range" id="opacity" min="20" max="100" step="5" value="100">
   <output id="opacity-out" for="opacity">100%</output>
   <p>整个面板一起变淡，往左拖越透明，透出后面的游戏。</p>
+</div>
+
+<div id="read">
+  <label for="read-cps">看剧情</label>
+  <input type="range" id="read-cps" min="0" max="15" step="1">
+  <output id="read-out" for="read-cps"></output>
+  <div id="read-demo" aria-live="off" title="自己翻的时候，点一下翻到下一句"><b></b><span></span><i></i></div>
+  <p>agent 自己玩时，每句台词、每一页停多久：按字数算，往右越快。拖到最左是自己翻，插件不翻，你按空格、点对话框才往下走。你在游戏里按了空格、点了按钮，这一句从你动手那一刻重新计时，插件不会和你抢着翻。</p>
 </div>
 
 <button type="button" id="mini" title="Ludus Lunae：点一下展开，按住可以拖">
@@ -345,7 +369,7 @@ if (panel && panel.setOpacity) {
     panel.setOpacity(value);
     showOpacity(value);
   });
-  $('look-toggle').onclick = () => { $('diag').classList.remove('open'); $('look').classList.toggle('open'); };
+  $('look-toggle').onclick = () => { $('diag').classList.remove('open'); closeRead(); $('look').classList.toggle('open'); };
 }
 
 // ---- 收起：面板折成一个小按钮，点一下展开，按住拖动；收着的时候 agent 说话，按钮上亮一个点 ----
@@ -417,7 +441,7 @@ setInterval(() => {
   if (snap !== lastReported) { lastReported = snap; report('periodic'); }
 }, 30000);
 
-$('diag-toggle').onclick = () => { renderDiag(); $('look').classList.remove('open'); $('diag').classList.toggle('open'); };
+$('diag-toggle').onclick = () => { renderDiag(); $('look').classList.remove('open'); closeRead(); $('diag').classList.toggle('open'); };
 $('diag-send').onclick = () => { report('manual'); $('diag-send').textContent = '已上报'; };
 
 // ---- 消息 ----
@@ -542,15 +566,93 @@ es.addEventListener('modes', (e) => showModes(JSON.parse(e.data)));
 let modes = {};
 function showModes(next) {
   modes = next;
-  document.querySelectorAll('#modes button').forEach((b) => b.classList.toggle('on', !!modes[b.dataset.mode]));
+  document.querySelectorAll('#modes button[data-mode]').forEach((b) => b.classList.toggle('on', !!modes[b.dataset.mode]));
+  showRead();
 }
 fetch('/api/modes').then((r) => r.json()).then(showModes).catch(() => {});
-document.querySelectorAll('#modes button').forEach((b) => {
+document.querySelectorAll('#modes button[data-mode]').forEach((b) => {
   b.onclick = () => fetch('/api/modes', {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ [b.dataset.mode]: !modes[b.dataset.mode] }),
   }).then((r) => r.json()).then(showModes).catch(() => {});
 });
+
+// ---- 看剧情：agent 自己玩时台词、翻页停多久。存在 modes.json 的 readCps（每秒几个字，0 是自己翻），游戏插件按它算 ----
+// 停多久 = 字数 ÷ 每秒几个字，最少 1 秒；英文字母、数字、空格按三分之一个字（和插件的 SelfPlay.ReadUnits 一样）。
+// 像乙女游戏的设置那样，下面放一句示范台词：拖滑条时照这个速度播，横线走完就翻到下一句
+const READ_CPS = [0, 3, 4, 5, 6, 7, 8, 10, 12, 14, 16, 20, 25, 30, 40, 50];
+const READ_DEMO = [
+  ['露丝', '爸爸，今天的课好难哦，不过老师夸我了！'],
+  ['露丝', '嗯。'],
+  ['', '夜深了，火山口的红光映在窗户上。屋子里暖洋洋的，露丝抱着枕头，已经快睡着了。'],
+  ['露丝', '我想去遗忘森林看看……听说那里的蘑菇晚上会发光，是真的吗？'],
+];
+const readUnits = (s) => [...s].reduce((n, ch) => n + (ch.codePointAt(0) < 0x250 ? 1 / 3 : 1), 0);
+const readText = (cps) => (cps > 0 ? `每秒 ${cps} 字` : '自己翻');
+let readCps = 12, readDragging = false, demoIndex = 0, demoStart = 0, demoFrame = 0;
+
+const readCpsNow = () => (readDragging ? READ_CPS[Number($('read-cps').value)] : readCps);
+function showRead() {
+  if (typeof modes.readCps === 'number') readCps = modes.readCps;
+  $('read-toggle').textContent = '看剧情：' + readText(readCps);
+  if (!readDragging) {
+    // 滑条只有这几档：modes.json 里写的不在档上，就停在最近的那一档
+    let best = 0;
+    READ_CPS.forEach((v, i) => { if (Math.abs(v - readCps) < Math.abs(READ_CPS[best] - readCps)) best = i; });
+    $('read-cps').value = best;
+    $('read-out').textContent = readText(readCps);
+  }
+  $('read-demo').classList.toggle('manual', readCpsNow() === 0);
+}
+
+// 示范：字一个个冒出来（和游戏里一样，一句最多 0.4 秒打完），停够了翻下一句；自己翻时点一下示范框才翻
+function demoTick(t) {
+  const [who, say] = READ_DEMO[demoIndex % READ_DEMO.length];
+  const chars = [...say];
+  const elapsed = t - demoStart;
+  const typeMs = Math.min(chars.length * 12, 400);
+  const demo = $('read-demo');
+  demo.querySelector('b').textContent = who || '　';
+  demo.querySelector('span').textContent = chars.slice(0, Math.ceil(chars.length * Math.min(1, elapsed / typeMs))).join('');
+  const cps = readCpsNow();
+  if (cps > 0) {
+    const stay = Math.max(1, readUnits(say) / cps) * 1000;
+    demo.style.setProperty('--done', Math.min(1, elapsed / stay));
+    if (elapsed >= stay) { demoIndex++; demoStart = t; }
+  }
+  demoFrame = requestAnimationFrame(demoTick);
+}
+function openRead() {
+  $('diag').classList.remove('open');
+  $('look').classList.remove('open');
+  $('read').style.top = $('modes').getBoundingClientRect().bottom + 6 + 'px';
+  $('read').classList.add('open');
+  demoStart = performance.now();
+  cancelAnimationFrame(demoFrame);
+  demoFrame = requestAnimationFrame(demoTick);
+}
+function closeRead() {
+  $('read').classList.remove('open');
+  cancelAnimationFrame(demoFrame);
+}
+$('read-toggle').onclick = () => ($('read').classList.contains('open') ? closeRead() : openRead());
+$('read-cps').addEventListener('input', (e) => {
+  readDragging = true;
+  $('read-out').textContent = readText(READ_CPS[Number(e.target.value)]);
+  $('read-demo').classList.toggle('manual', readCpsNow() === 0);
+});
+// 松手才存：拖的过程中示范跟着变，不用每一档都写一次 modes.json
+$('read-cps').addEventListener('change', (e) => {
+  const cps = READ_CPS[Number(e.target.value)];
+  readDragging = false;
+  modes.readCps = cps;
+  showRead();
+  fetch('/api/modes', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ readCps: cps }),
+  }).then((r) => r.json()).then(showModes).catch(() => {});
+});
+$('read-demo').onclick = () => { if (readCpsNow() === 0) { demoIndex++; demoStart = performance.now(); } };
 es.addEventListener('tick', (e) => {
   const t = JSON.parse(e.data);
   stats.ticks++;

@@ -25,7 +25,7 @@ const CHAT = path.join(DATA, 'chat.jsonl');
 const DIAG = path.join(DATA, 'diag.jsonl');
 const TOKEN_FILE = path.join(DATA, 'token');
 const SESSION_FILE = path.join(DATA, 'session.json');
-const MODES_FILE = path.join(DATA, 'modes.json');  // 游戏插件读它：selfplay agent 自己玩（关着就是 user 玩、陪玩同步），skipGames 跳过小游戏
+const MODES_FILE = path.join(DATA, 'modes.json');  // 游戏插件读它：selfplay agent 自己玩（关着就是 user 玩、陪玩同步），skipGames 跳过小游戏，readCps 看剧情的速度
 const PRESENCE_FILE = path.join(DATA, 'presence.json');  // 谁挂着：重启服务也不丢
 const PRESENCE_TTL_MS = Number(process.env.LUDUS_PRESENCE_TTL_MS || 10 * 60_000);  // 这么久没动静就算走了
 const ACTIVE_FILE = path.join(DATA, 'active.json');      // 现在在玩的那一个：重启服务也不丢
@@ -60,7 +60,8 @@ try { session = JSON.parse(fs.readFileSync(SESSION_FILE, 'utf8')); } catch {}
 
 // packByScene：陪玩同步按地点 / 按剧情分包（关了就按月）。
 // skipGames 默认开：限时小游戏 agent 一步一步点来不及（面板上的开关、skip off 可以关）。已经有 modes.json 的照它，不改
-const DEFAULT_MODES = { selfplay: false, skipGames: true, packByScene: true };
+// readCps：agent 自己玩时插件翻台词、翻页的速度，每秒几个字（面板上「看剧情」那根滑条），0 是自己翻
+const DEFAULT_MODES = { selfplay: false, skipGames: true, packByScene: true, readCps: 12 };
 
 function readModes() {
   try { return { ...DEFAULT_MODES, ...JSON.parse(fs.readFileSync(MODES_FILE, 'utf8')) }; }
@@ -70,7 +71,9 @@ function readModes() {
 function setModes(changes) {
   const modes = readModes();
   for (const key of Object.keys(DEFAULT_MODES)) {
-    if (typeof changes[key] === 'boolean') modes[key] = changes[key];
+    const v = changes[key];
+    if (typeof DEFAULT_MODES[key] === 'boolean' && typeof v === 'boolean') modes[key] = v;
+    if (typeof DEFAULT_MODES[key] === 'number' && Number.isFinite(v) && v >= 0 && v <= 100) modes[key] = v;
   }
   fs.writeFileSync(MODES_FILE, JSON.stringify(modes));
   broadcast('modes', modes);

@@ -25,7 +25,7 @@ import { parseArgs } from 'node:util';
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
 import { CallToolRequestSchema, ListToolsRequestSchema, isInitializeRequest } from '@modelcontextprotocol/sdk/types.js';
-import { WAIT_SECONDS, GAME_TOOLS, PLAY_TOOL, SAY_TOOL, PANEL_TOOL, MEMORY_TOOLS, INSTRUCTIONS, pub } from './tools.mjs';
+import { WAIT_SECONDS, GAME_TOOLS, PLAY_TOOL, SAY_TOOL, PANEL_TOOL, MEMORY_TOOLS, INSTRUCTIONS, namesNote, pub } from './tools.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(HERE, '..');
@@ -801,6 +801,7 @@ function mailboxReadme() {
     MAILBOX,                                    // 信箱的绝对路径
     HUB_URL: `http://127.0.0.1:${PORT}/mcp`,
     HUB_MODE: opt.lan ? '局域网模式，要 token' : TOKEN ? '只听本机，要 token' : '只听本机',
+    NAMES_NOTE: namesNote() ? `\n${namesNote()}\n` : '',  // 名字还是占位的：请 agent 问问人、设上
   };
   return fs.readFileSync(path.join(HERE, 'mailbox-README.txt'), 'utf8').replace(/\{\{([A-Z_]+)\}\}/g, (m, key) => fill[key] ?? m);
 }

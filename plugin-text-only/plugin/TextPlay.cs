@@ -1181,6 +1181,9 @@ static class TextPlay
         try
         {
             if (pendingGo != null) return pendingWhat;
+            // 停在一页上等人读完（Auto 每 0.25 秒刷新一次，没刷新就过期）：页上按人读的速度停，
+            // 不说一声 agent 会以为轮到它了，抢在人前面点掉
+            if (Time.unscaledTime - autoWaitAt < 0.6f) return autoWaitWhat;
             if (Active(52)) return "换地方";
             if (Doing()) return "在做事";
         }
@@ -1195,8 +1198,12 @@ static class TextPlay
     }
 
     static readonly Dictionary<int, float> autoSeen = new Dictionary<int, float>();
+    static float autoWaitAt = -1f;
+    static string autoWaitWhat = "";
 
-    // 每 0.25 秒：等着点的东西、不用做决定的翻页
+    // 每 0.25 秒：等着点的东西、不用做决定的翻页。
+    // 翻页前停多久按页上的字数和面板上「看剧情」的速度算（SelfPlay.ReadDelay）；
+    // 看剧情设成自己翻、或者人刚自己动过手，就不点，停在这一页等人
     internal static void Auto(float now, bool idle)
     {
         if (pendingGo != null)
@@ -1219,7 +1226,7 @@ static class TextPlay
             }
             return;
         }
-        if (!idle || SureOpen()) { autoSeen.Clear(); return; }
+        if (!idle || SureOpen()) { autoSeen.Clear(); autoNext = null; return; }
         GameObject next = null;
         string what = null, pageText = "";
         float delay = 0.8f;
@@ -1230,7 +1237,12 @@ static class TextPlay
                 foreach (var b in Ui(29).GetComponentsInChildren<Button>(false))
                 {
                     for (int i = 0; i < b.onClick.GetPersistentEventCount() && next == null; i++)
-                        if (b.onClick.GetPersistentMethodName(i) == "CloseCelebrateWnd") { next = b.gameObject; what = "庆祝窗口：确认"; delay = 1.2f; }
+                        if (b.onClick.GetPersistentMethodName(i) == "CloseCelebrateWnd")
+                        {
+                            next = b.gameObject;
+                            what = "庆祝窗口：确认";
+                            delay = PageDelay(Sub(Ui(29), "panel"), 1.2f);
+                        }
                     if (next != null) break;
                 }
             // 月中过程：「下一页」和结算后的「进入下月」
@@ -1241,8 +1253,18 @@ static class TextPlay
                     for (int i = 0; i < b.onClick.GetPersistentEventCount(); i++)
                     {
                         var m = b.onClick.GetPersistentMethodName(i);
-                        if (m == "StartProcessPage") { next = b.gameObject; what = "过程页：下一页"; }
-                        else if (m == "EndProcessBtn") { next = b.gameObject; what = "结算完，进入下月"; delay = 2f; }
+                        if (m == "StartProcessPage")
+                        {
+                            next = b.gameObject;
+                            what = "过程页：下一页";
+                            delay = PageDelay(Sub(Ui(3), "panel", "cell", "des"), 0.8f);  // 这一格做了什么、女儿说了什么
+                        }
+                        else if (m == "EndProcessBtn")
+                        {
+                            next = b.gameObject;
+                            what = "结算完，进入下月";
+                            delay = PageDelay(Sub(Ui(3), "panel", "result"), 2f);
+                        }
                     }
                     if (next != null) break;
                 }
@@ -1256,7 +1278,7 @@ static class TextPlay
                     next = it.go;
                     what = ub.index == 114 ? "生日贺卡：下一张" : "下一页";
                     pageText = SelfPlay.ReadTexts(PageRoot(it.go));
-                    delay = Mathf.Clamp(1.5f + pageText.Length * 0.04f, 2f, 8f);
+                    delay = SelfPlay.ReadDelay(SelfPlay.ReadUnits(pageText), 2f);
                     break;
                 }
             // 演出（开场之类）只有一个「继续」按钮
@@ -1265,19 +1287,47 @@ static class TextPlay
                 var cg = Ui(49).Find("cg").Find("btn");
                 if (cg.gameObject.activeInHierarchy)
                     foreach (var mb in cg.GetComponentsInChildren<MonoBehaviour>(false))
-                        if (mb is IPointerClickHandler && mb.isActiveAndEnabled) { next = mb.gameObject; what = "演出：继续"; delay = 1.5f; break; }
+                        if (mb is IPointerClickHandler && mb.isActiveAndEnabled)
+                        {
+                            next = mb.gameObject;
+                            what = "演出：继续";
+                            delay = PageDelay(Ui(49), 1.5f);
+                            break;
+                        }
             }
         }
         catch { }
+        autoNext = next;
+        autoNextWhat = what;
         if (next == null) { autoSeen.Clear(); return; }
         Vector2 pt;
         if (!SelfPlay.Reachable(next, out pt)) return;
+        autoWaitAt = now;
+        autoWaitWhat = SelfPlay.ManualRead ? "停在这一页，等人自己翻（" + what + "）" : "停在这一页，等人读完（" + what + "）";
         int id = next.GetInstanceID();
         float since;
         if (!autoSeen.TryGetValue(id, out since)) { autoSeen.Clear(); autoSeen[id] = now; return; }
-        if (now - since < delay) return;
+        if (SelfPlay.ManualRead) return;
+        if (now - Mathf.Max(since, SelfPlay.HumanAt) < delay) return;  // 人刚点过、翻过：这一页从那一刻重新算
         autoSeen.Clear();
-        if ((what == "下一页" || what == "生日贺卡：下一张") && pageText != "") SelfPlay.Event("story", Json.Field("text", pageText));
+        autoWaitAt = -1f;
+        LogPage(next, what);
+        SelfPlay.Press(next);
+        SelfPlay.Acted(what);
+    }
+
+    // Auto 最近一次看到的、等着翻的那一页（人自己点了翻页时 HumanPressed 用）
+    static GameObject autoNext;
+    static string autoNextWhat;
+
+    // 翻过去之前把这一页的字记成事件：插件翻和人翻都记，不然人翻过去的那几页 agent 看不到
+    static void LogPage(GameObject next, string what)
+    {
+        if (what == "下一页" || what == "生日贺卡：下一张")
+        {
+            var text = SelfPlay.ReadTexts(PageRoot(next));
+            if (text != "") SelfPlay.Event("story", Json.Field("text", text));
+        }
         if (what == "庆祝窗口：确认")
         {
             var text = SelfPlay.ReadTexts(Ui(29).Find("panel"));
@@ -1288,8 +1338,32 @@ static class TextPlay
             var text = SelfPlay.ReadTexts(Ui(3).Find("panel").Find("result"));
             if (text != "") SelfPlay.Event("month-result", Json.Field("text", text));
         }
-        SelfPlay.Press(next);
-        SelfPlay.Acted(what);
+    }
+
+    // 人自己点了插件等着翻的那一页（点击还没生效，页上的字还在）
+    internal static void HumanPressed(GameObject go)
+    {
+        if (go == null || go != autoNext) return;
+        LogPage(go, autoNextWhat);
+        autoSeen.Clear();
+        autoWaitAt = -1f;
+    }
+
+    // 这一页要读多久：root 下看得见的字。root 找不到就按 least（ReadTexts 不给 root 会读整个画面）
+    static float PageDelay(Transform root, float least)
+    {
+        return SelfPlay.ReadDelay(root == null ? 0f : SelfPlay.ReadUnits(SelfPlay.ReadTexts(root)), least);
+    }
+
+    // 一层层往下找，哪一层没有就是 null（不抛异常，免得整个 Auto 白跑）
+    static Transform Sub(Transform t, params string[] names)
+    {
+        foreach (var n in names)
+        {
+            if (t == null) return null;
+            t = t.Find(n);
+        }
+        return t;
     }
 
     // 翻页按钮所在的那一页：往上找到有不少字的那一层
